@@ -7,45 +7,100 @@ import os
 import numpy as np
 from scipy import stats
 import urllib.parse
-from utils.config import POSITION_TRANSLATION, PERFILES_KPI_PESOS, ROLE_PROFILES as ROLE_PROFILES_ES, PROFILE_TO_ROLES
 
-# Ruta de los archivos de datos
+# Percorso dei file dati
 DATA_FILE = os.path.normpath("C:/Users/Gianluigi/Desktop/dash_scouting_app/datos/fbref/base_datos_tutte_le_leghe_renamed.csv")
 ORIGINAL_FILE = os.path.normpath("C:/Users/Gianluigi/Desktop/dash_scouting_app/base_datos_tutte_le_leghe_renamed.csv")
 
-# Registro de la página
+# Registrazione della pagina
 dash.register_page(__name__, path='/scouting')
 
-# Carica il dataset principale, leggendo TUTTE le colonne
-df = pd.read_csv(DATA_FILE, encoding="utf-8", low_memory=False, keep_default_na=False, na_values=[''])
-
-# Carica il dataset originale/completo per unire le colonne mancanti
-try:
-    ORIGINAL_DF = pd.read_csv(ORIGINAL_FILE, encoding="utf-8", low_memory=False)
-    if 'Player_ID' in df.columns and 'Player_ID' in ORIGINAL_DF.columns:
-        missing_cols = [col for col in ORIGINAL_DF.columns if col not in df.columns]
-        if missing_cols:
-            print(f"Scouting: Trovate colonne mancanti. Tentativo di unione per: {missing_cols}")
-            df['Player_ID'] = df['Player_ID'].astype(str)
-            ORIGINAL_DF['Player_ID'] = ORIGINAL_DF['Player_ID'].astype(str)
-            cols_to_merge = ['Player_ID'] + missing_cols
-            df = pd.merge(df, ORIGINAL_DF[cols_to_merge], on='Player_ID', how='left')
-            print("Scouting: Unione completata con successo.")
-except FileNotFoundError:
-    print(f"Scouting: Attenzione, file originale non trovato: {ORIGINAL_FILE}")
-except Exception as e:
-    print(f"Scouting: Errore critico durante l'unione dei file: {e}")
-
-# --- CORREZIONE: Rinomina la colonna del contratto dopo l'unione ---
-if 'Contract Until' in df.columns:
-    df.rename(columns={'Contract Until': 'Contratto'}, inplace=True)
-    print("Colonna 'Contract Until' rinominata in 'Contratto'.")
-
-# Coeficientes de liga
+# Coefficienti lega
 coeff_leghe = {
     "Premier League": 2.0, "La Liga": 2.0, "Serie A": 2.0, "Bundesliga": 2.0,
     "Ligue 1": 2.0, "Primeira Liga": 1.5, "Eredivisie": 1.5,
     "Championship": 1.5, "Belgio": 1.5, "Serie B": 1.0
+}
+
+# Profili KPI
+profili_kpi_pesi = {
+    "Centrale - Marcatura": {
+        "con_palla": {"% Cmp.2": 5, "% Cmp.3": 5},
+        "senza_palla": {"TklG": 15, "3.º cent.": 15, "Recup.": 10, "Fls": 5, "DTkl%": 15, "% de ganados": 20}
+    },
+    "Centrale - Deep Distributor": {
+        "con_palla": {"3.º cent.": 10, "Dist. prg.": 15, "P1/3": 15, "% Cmp.1": 15, "% Cmp.2": 10, "% Cmp.3": 5},
+        "senza_palla": {"3.º cent.": 10, "Int": 10, "DTkl%": 5, "% de ganados": 5}
+    },
+    "Recuperatore 20-80": {
+        "con_palla": {"% Cmp.2": 10, "% Cmp.3": 10},
+        "senza_palla": {"Int": 25, "Bloqueos": 20, "Desp.": 10, "Recup.": 15, "DTkl%": 5, "% de ganados": 5}
+    },
+    "Sentinel Fullback 20-80": {
+        "con_palla": {"% Cmp": 5, "Camb.": 15},
+        "senza_palla": {"Tkl": 15, "Recup.": 15, "Fls": 5, "DTkl%": 15, "% de ganados": 15, "PasesB": 15}
+    },
+    "Quinto ATA 70-30": {
+        "con_palla": {"PrgC": 5, "Succ": 5, "CrAP": 25, "PrgR": 10, "xAG": 10, "TAtaq. pen.": 10, "Att.2": 5},
+        "senza_palla": {"3.º cent.": 10, "Int": 10, "TklG": 5, "% de ganados": 5}
+    },
+    "Arnold 80-20": {
+        "con_palla": {"3.º ataq.": 5, "PC": 15, "Exitosa%": 15, "Camb.": 20, "PrgP": 15, "% Cmp": 10},
+        "senza_palla": {"3.º cent.": 5, "Int": 5, "TklG": 5, "% de ganados": 5}
+    },
+    "Difensivo": {
+        "con_palla": {"% Cmp": 10, "% Cmp.1": 10},
+        "senza_palla": {"Int": 15, "Recup.": 25, "Fls": 5, "TklG": 10, "PasesB": 10, "DTkl%": 10, "% de ganados": 5}
+    },
+    "Play": {
+        "con_palla": {"Toques": 25, "PrgP": 15, "P1/3": 10, "% Cmp.1": 10, "% Cmp.3": 10},
+        "senza_palla": {"Tkl": 15, "Tkl+Int": 15}
+    },
+    "Box-to-Box": {
+        "con_palla": {"PrgC": 30, "Dist. prg.": 20, "Succ": 5, "npxG+xAG":10, "PrgR": 5},
+        "senza_palla": {"Tkl": 10, "Tkl+Int": 10, "% de ganados": 5, "Recup.": 5}
+    },
+    "Dieci": {
+        "con_palla": {"P1/3": 5, "xAG": 10, "PPA": 5, "SCA90": 20, "C1/3": 7.5, "PrgP": 5, "xG": 5, "DistD": 15, "T/90": 5, "PL": 5, "Att": 5, "Exitosa%": 2.5},
+        "senza_palla": {"3.º ataq": 5, "Recup.": 5}
+    },
+    "1vs1": {
+        "con_palla": {"xAG": 10, "CrAP": 10, "SCA90": 10, "PL": 5, "xG": 5, "Att": 10, "Exitosa%": 30},
+        "senza_palla": {"Tkl+Int": 5, "FR": 10, "Recup.": 5}
+    },
+    "Interior 90-10": {
+        "con_palla": {"xAG": 25, "SCA90": 20, "TAP": 15, "PPA": 15, "T/90": 5, "xG": 10, "Att": 5},
+        "senza_palla": {"3.º ataq": 5, "Recup.": 5}
+    },
+    "Mobile Forward": {
+        "con_palla": {"xG": 10, "xAG": 10, "PrgR": 15, "SCA90": 15, "T/90": 10, "T3.º ataq.": 5, "C1/3": 15, "Gls.": 5},
+        "senza_palla": {"Recup.": 5, "FR": 10}
+    },
+    "Target": {
+        "con_palla": {"PrgR": 20, "npxG": 10, "Ass": 20, "T/90": 10, "TAtaq. pen.": 10, "% de TT": 10, "Gls.": 5},
+        "senza_palla": {"% de ganados": 10, "FR": 5}
+    },
+    "Lethal Striker": {
+        "con_palla": {"npxG": 10, "T/90": 10, "G/TalArc": 10, "TAtaq. pen.": 20, "% de TT": 10, "Gls.": 20},
+        "senza_palla": {"% de ganados": 20}
+    }
+}
+
+# Mapping dei ruoli con i profili possibili
+ROLE_PROFILES = {
+    "Centre-Back": ["Centrale - Marcatura", "Centrale - Deep Distributor", "Recuperatore 20-80"],
+    "Left-Back": ["Sentinel Fullback 20-80", "Quinto ATA 70-30", "Arnold 80-20"],
+    "Right-Back": ["Sentinel Fullback 20-80", "Quinto ATA 70-30", "Arnold 80-20"],
+    "Defensive Midfield": ["Difensivo", "Play", "Box-to-Box"],
+    "Central Midfield": ["Difensivo", "Play", "Box-to-Box"],
+    "Midfielder": ["Difensivo", "Play", "Box-to-Box"],
+    "Attacking Midfield": ["Dieci", "Box-to-Box", "Interior 90-10"],
+    "Left Midfield": ["Quinto ATA 70-30", "Arnold 80-20", "1vs1"],
+    "Right Midfield": ["Quinto ATA 70-30", "Arnold 80-20", "1vs1"],
+    "Left Winger": ["1vs1", "Interior 90-10"],
+    "Right Winger": ["1vs1", "Interior 90-10"],
+    "Second Striker": ["Dieci", "Mobile Forward", "Target", "1vs1", "Interior 90-10"],
+    "Centre-Forward": ["Mobile Forward", "Target", "Lethal Striker"]
 }
 
 def eta_decimale(valore):
@@ -58,17 +113,28 @@ def eta_decimale(valore):
         except:
             return None
 
-# Función para convertir el valor de mercado en millones
+# Lista delle colonne necessarie
+COLONNE_NECESSARIE = [
+    'Name', 'Position', 'Height', 'Foot', 'Market Value', 'Edad', 'Mín', 'Lega', 'Squadra', 'link',
+    # Colonne per i profili
+    'TklG', '3.º def.', '3.º cent.', '3.º ataq.', 'Recup.', 'Fls', 'DTkl%', '% de ganados',
+    'Dist. tot.', 'Dist. prg.', 'P1/3', '% Cmp', '% Cmp.1', '% Cmp.2', '% Cmp.3',
+    'Int', 'Bloqueos', 'Desp.', 'Tkl', 'PasesB',
+    'PrgC', 'Succ', 'Camb.', 'PrgR', 'xAG', 'TAtaq. pen.',
+    'PC', 'Exitosa%', 'CrAP', 'PrgP', 'Gls.', 'npxG', 'T/90', 'G/TalArc', 'Ass', 'Att.2'
+]
+
+# Funzione per convertire il valore di mercato in milioni
 def converti_valore_mercato(valore):
     try:
         if pd.isna(valore) or valore == '':
             return 0.0
         
-        # Convierte el valor en string y elimina todos los posibles símbolos del euro
+        # Converte il valore in stringa e rimuove tutti i possibili simboli dell'euro
         valore = str(valore)
         valore = valore.replace('â¬', '').replace('â\x82¬', '').replace('€', '').strip()
         
-        # Convierte en número
+        # Converte in numero
         if 'm' in valore.lower():
             return float(valore.lower().replace('m', ''))
         elif 'k' in valore.lower():
@@ -78,34 +144,162 @@ def converti_valore_mercato(valore):
     except:
         return 0.0
 
-# Eseguiamo la pre-elaborazione direttamente sul dataframe 'df'
+# Funzione per caricare i dati da entrambi i file
+def load_data():
+    try:
+        # Prima prova a leggere le colonne disponibili nel file principale
+        available_cols = pd.read_csv(DATA_FILE, nrows=0).columns.tolist()
+        cols_to_load = [col for col in available_cols if col in COLONNE_NECESSARIE]
+        
+        # Carica il file principale con le colonne disponibili
+        df_main = pd.read_csv(
+            DATA_FILE,
+            usecols=cols_to_load,
+            low_memory=False
+        )
+        
+        # Controlla quali colonne mancano
+        missing_cols = [col for col in COLONNE_NECESSARIE if col not in df_main.columns]
+        
+        if missing_cols:
+            try:
+                # Verifica quali colonne sono disponibili nel file originale
+                available_cols_orig = pd.read_csv(ORIGINAL_FILE, nrows=0).columns.tolist()
+                cols_to_load = ['Name'] + [col for col in missing_cols if col in available_cols_orig]
+                
+                if len(cols_to_load) > 1:  # se ci sono colonne da caricare oltre a 'Name'
+                    # Carica solo le colonne mancanti dal file originale
+                    df_original = pd.read_csv(
+                        ORIGINAL_FILE,
+                        usecols=cols_to_load,
+                        low_memory=False
+                    )
+                    
+                    # Merge solo delle colonne mancanti
+                    df = pd.merge(df_main, df_original, on='Name', how='left')
+                else:
+                    df = df_main
+            except Exception as e:
+                print(f"Attenzione nel caricamento del file originale: {e}")
+                df = df_main
+        else:
+            df = df_main
+            
+    except Exception as e:
+        print(f"Errore nel caricamento del file principale: {e}")
+        # Prova a caricare il file originale
+        try:
+            # Verifica quali colonne sono disponibili
+            available_cols = pd.read_csv(ORIGINAL_FILE, nrows=0).columns.tolist()
+            cols_to_load = [col for col in available_cols if col in COLONNE_NECESSARIE]
+            
+            df = pd.read_csv(
+                ORIGINAL_FILE,
+                usecols=cols_to_load,
+                low_memory=False
+            )
+        except Exception as e:
+            print(f"Errore nel caricamento del file originale: {e}")
+            raise Exception("Nessun file dati trovato")
+    
+    # Aggiungi colonne mancanti con valori di default
+    for col in COLONNE_NECESSARIE:
+        if col not in df.columns:
+            print(f"Aggiunta colonna mancante con valori di default: {col}")
+            if col in ['Edad', 'Mín']:
+                df[col] = 0
+            elif col in ['Market Value']:
+                df[col] = '€0M'
+            elif col == 'link':
+                df[col] = df['Name'].apply(lambda x: f'/player/{urllib.parse.quote(x)}')
+            else:
+                df[col] = ''
+    
+    # Converti i tipi di dati per ottimizzare la memoria
+    for col in df.select_dtypes(include=['float64']).columns:
+        df[col] = df[col].astype('float32')
+    
+    for col in df.select_dtypes(include=['int64']).columns:
+        df[col] = df[col].astype('int32')
+    
+    return df
+
+# Carica i dati
+try:
+    df = load_data()
+except Exception as e:
+    print(f"Errore nel caricamento dei dati: {e}")
+    df = pd.DataFrame(columns=COLONNE_NECESSARIE)  # DataFrame vuoto ma con le colonne corrette
+
+# Parsing dei dati
 df['Edad'] = df['Edad'].apply(eta_decimale)
-df.dropna(subset=['Edad'], inplace=True)
 df['Mín'] = df['Mín'].astype(str).str.replace(',', '').astype(float)
 df['Market_Value_M'] = df['Market Value'].apply(converti_valore_mercato)
 
-# Traduce "Jun" en "Junio" una sola vez
-if 'Contratto' in df.columns:
-    df['Contratto'] = df['Contratto'].fillna('N/A').astype(str).str.replace('Jun', 'Junio', case=False).str.strip()
-else:
-    df['Contratto'] = 'N/A'
-
-# Aplica los coeficientes de liga de manera más eficiente
-df["Coeff Lega"] = 1.0  # valor de default
+# Calcola il coefficiente lega in modo più efficiente
+df["Coeff Lega"] = 1.0  # valore di default
 mask_min = df['Mín'] < 1500
 df.loc[mask_min, "Coeff Lega"] = 1.5
 
-# Aplica los coeficientes de las ligas conocidas
+# Applica i coefficienti delle leghe conosciute
 for lega, coeff in coeff_leghe.items():
     mask_lega = df['Lega'] == lega
     df.loc[mask_lega, "Coeff Lega"] = coeff
 
-# Renombra la liga para la visualización DESPUÉS de haber aplicado los coeficientes
-if 'Lega' in df.columns:
-    df['Lega'] = df['Lega'].replace('Belgio', 'Jupiler Pro League')
-
-# Get unique leagues for the filter
-leagues = sorted([str(l) for l in df['Lega'].unique() if pd.notna(l)])
+# Calcolo degli score per ogni profilo una volta sola
+for profilo in profili_kpi_pesi.keys():
+    # Determina le posizioni valide per il profilo
+    if profilo in ["Centrale - Marcatura", "Centrale - Deep Distributor", "Recuperatore 20-80"]:
+        posizioni_valide = ["Centre-Back"]
+    elif profilo == "Sentinel Fullback 20-80":
+        posizioni_valide = ["Left-Back", "Right-Back"]
+    elif profilo in ["Quinto ATA 70-30", "Arnold 80-20"]:
+        posizioni_valide = ["Left-Back", "Right-Back", "Left Midfield", "Right Midfield"]
+    elif profilo in ["Difensivo", "Play", "Box-to-Box"]:
+        posizioni_valide = ["Defensive Midfield", "Central Midfield", "Midfielder"]
+        if profilo == "Box-to-Box":
+            posizioni_valide.append("Attacking Midfield")
+    elif profilo == "Dieci":
+        posizioni_valide = ["Attacking Midfield", "Second Striker"]
+    elif profilo == "1vs1":
+        posizioni_valide = ["Right Winger", "Right Midfield", "Left Winger", "Left Midfield", "Second Striker", "Attacking Midfield"]
+    elif profilo == "Interior 90-10":
+        posizioni_valide = ["Right Winger", "Left Winger", "Second Striker", "Attacking Midfield"]
+    elif profilo in ["Mobile Forward", "Target"]:
+        posizioni_valide = ["Centre-Forward", "Second Striker"]
+    elif profilo == "Lethal Striker":
+        posizioni_valide = ["Centre-Forward"]
+    else:
+        posizioni_valide = ["Left-Back", "Right-Back", "Left Midfield", "Right Midfield"]
+    
+    # Filtra per posizione
+    df_pos = df[df["Position"].isin(posizioni_valide)].copy()
+    
+    # Calcola lo score per questo profilo
+    score_series = pd.Series(0.0, index=df_pos.index)
+    for sezione, kpi_pesi in profili_kpi_pesi[profilo].items():
+        for kpi, peso in kpi_pesi.items():
+            colonna = next((c for c in df_pos.columns if kpi in c), None)
+            if colonna:
+                valori = pd.to_numeric(df_pos[colonna], errors='coerce') * df_pos['Coeff Lega']
+                minimo, massimo = valori.min(), valori.max()
+                if massimo > minimo:
+                    # Normalizzazione da 20 a 99 invece che da 1 a 99
+                    valori_norm = ((valori - minimo) * 79 / (massimo - minimo) + 20).round(2)
+                else:
+                    valori_norm = pd.Series(20, index=df_pos.index)
+                score_series += valori_norm.fillna(20) * peso
+    
+    # Normalizza a 99, mantenendo 20 come minimo
+    massimo_score = score_series.max()
+    if massimo_score > 20:
+        # Riscala mantenendo 20 come minimo
+        score_series = (((score_series - 20) * (79)) / (massimo_score - 20) + 20).round(1)
+    else:
+        score_series = pd.Series(20, index=df_pos.index)
+    
+    # Salva lo score nel DataFrame principale
+    df.loc[df_pos.index, f'Score_{profilo}'] = score_series
 
 def get_player_category(age, score):
     """Determine player category based on age and score."""
@@ -142,51 +336,36 @@ def get_player_category(age, score):
     else:
         return "N/A"
 
-# Elimina las funciones y listas no más necesarias
-min_eta, max_eta = (int(df['Edad'].min()), int(df['Edad'].max())) if not df.empty else (15, 40)
+# Lista delle categorie possibili
+CATEGORIE = [
+    "Estrella Mundial",
+    "Jugador Top",
+    "Buen Jugador",
+    "Jugador de Media Tabla",
+    "Jugador de Baja Tabla",
+    "Jugador de División 2",
+    "Joven Estrella Mundial",
+    "Futura Estrella",
+    "Joven con Calidad",
+    "Buen Joven",
+    "Joven"
+]
 
-# --- MAPPA DI TRADUZIONE SPAGNOLO -> ITALIANO ---
-# Necessaria perché i nomi dei profili nei dati (colonne Score_*, Category_*) sono in italiano.
-ROLE_PROFILES_IT = {
-    "Goalkeeper": ["Portero"],
-    "Centre-Back": ["Centrale - Marcatura", "Centrale - Deep Distributor", "Recuperatore 20-80"],
-    "Left-Back": ["Sentinel Fullback 20-80", "Quinto ATA 70-30", "Arnold 80-20"],
-    "Right-Back": ["Sentinel Fullback 20-80", "Quinto ATA 70-30", "Arnold 80-20"],
-    "Defensive Midfield": ["Difensivo", "Play", "Box-to-Box"],
-    "Central Midfield": ["Difensivo", "Play", "Box-to-Box"],
-    "Midfielder": ["Difensivo", "Play", "Box-to-Box"],
-    "Attacking Midfield": ["Dieci", "Box-to-Box", "Interior 90-10"],
-    "Left Midfield": ["Quinto ATA 70-30", "Arnold 80-20", "1vs1"],
-    "Right Midfield": ["Quinto ATA 70-30", "Arnold 80-20", "1vs1"],
-    "Left Winger": ["1vs1", "Interior 90-10"],
-    "Right Winger": ["1vs1", "Interior 90-10"],
-    "Second Striker": ["Dieci", "Mobile Forward", "Target", "1vs1", "Interior 90-10"],
-    "Centre-Forward": ["Mobile Forward", "Target", "Lethal Striker"]
-}
-SPANISH_TO_ITALIAN_PROFILES = {}
-for role, spanish_profiles in ROLE_PROFILES_ES.items():
-    if role in ROLE_PROFILES_IT:
-        italian_profiles = ROLE_PROFILES_IT[role]
-        for i, spanish_profile in enumerate(spanish_profiles):
-            if i < len(italian_profiles):
-                SPANISH_TO_ITALIAN_PROFILES[spanish_profile] = italian_profiles[i]
-# --- FINE MAPPA ---
-
-# Layout de la página
+# Layout della pagina
 layout = dbc.Container([
-    html.H1("Aplicación de Análisis y Scouting", className="text-center my-4", style={"color": "#0082F3"}),
+    html.H1("Scouting Dashboard", className="text-center my-4", style={"color": "#0082F3"}),
     
     dbc.Row([
         dbc.Col([
-            html.H4("Filtros", className="mb-3"),
+            html.H4("Filtri", className="mb-3"),
             dbc.Card([
                 dbc.CardBody([
-                    # Selección de perfil
-                    html.Label("Perfil KPI"),
+                    # Selezione profilo
+                    html.Label("Profilo KPI"),
                     dcc.Dropdown(
                         id='profile-dropdown',
-                        options=[{"label": p, "value": p} for p in PERFILES_KPI_PESOS.keys()],
-                        value=list(PERFILES_KPI_PESOS.keys())[0],
+                        options=[{"label": p, "value": p} for p in profili_kpi_pesi.keys()],
+                        value=list(profili_kpi_pesi.keys())[0],
                         clearable=False,
                         style={
                             'color': 'black',
@@ -194,37 +373,21 @@ layout = dbc.Container([
                         }
                     ),
                     
-                    # Checklist para las posiciones
-                    html.Label("Posiciones", className="mt-3"),
-                    dbc.Checklist(
-                        id='position-checklist',
-                        options=[],
-                        value=[],
-                        inline=True,
-                        style={'color': 'white', 'margin-left': '10px'}
+                    # Filtro categoria
+                    html.Label("Categoria", className="mt-3"),
+                    dcc.Dropdown(
+                        id='category-dropdown',
+                        options=[{"label": cat, "value": cat} for cat in CATEGORIE],
+                        value=None,
+                        clearable=True,
+                        style={
+                            'color': 'black',
+                            'background-color': 'white'
+                        }
                     ),
                     
-                    # Filtro de ligas
-                    html.Label("Ligas", className="mt-3"),
-                    dbc.Checklist(
-                        id='league-checklist',
-                        options=[{'label': lega, 'value': lega} for lega in leagues],
-                        value=leagues,
-                        style={'color': 'white', 'margin-left': '10px', 'max-height': '150px', 'overflow-y': 'auto', 'border': '1px solid #444', 'padding': '10px', 'border-radius': '5px'}
-                    ),
-                    
-                    # Filtro Agente Libre
-                    html.Label("Agente Libre", className="mt-3"),
-                    dbc.Checklist(
-                        id='agente-libre-checklist',
-                        options=[{'label': '', 'value': 'AGENTE_LIBRE'}],
-                        value=[],
-                        inline=True,
-                        style={'color': 'white', 'margin-left': '10px'}
-                    ),
-                    
-                    # Filtro minutos
-                    html.Label("Rango de minutos jugados", className="mt-3"),
+                    # Filtro minuti
+                    html.Label("Range minuti giocati", className="mt-3"),
                     dcc.RangeSlider(
                         id='min-minutes-slider',
                         min=0,
@@ -235,20 +398,19 @@ layout = dbc.Container([
                         tooltip={"placement": "bottom", "always_visible": True}
                     ),
                     
-                    # Filtro edad
-                    html.Label("Rango de Edad", className="mt-3"),
-                    dcc.RangeSlider(
-                        id='age-range-slider',
-                        min=min_eta,
-                        max=max_eta,
-                        step=1,
-                        value=[min_eta, max_eta],
-                        marks={i: str(i) for i in range(min_eta, max_eta + 1, 2)},
-                        tooltip={"placement": "bottom", "always_visible": True}
+                    # Filtro età
+                    html.Label("Età massima", className="mt-3"),
+                    dcc.Input(
+                        id='max-age-input',
+                        type="number",
+                        value=25,
+                        min=15,
+                        max=40,
+                        step=1
                     ),
 
-                    # Filtro valor de mercado
-                    html.Label("Valor de mercado (M€)", className="mt-3"),
+                    # Filtro valore di mercato
+                    html.Label("Valore di mercato (M€)", className="mt-3"),
                     dcc.RangeSlider(
                         id='market-value-slider',
                         min=0,
@@ -261,9 +423,9 @@ layout = dbc.Container([
             ], className="mb-4")
         ], width=3),
         
-        # Tabla de jugadores
+        # Tabella giocatori
         dbc.Col([
-            html.H4("Jugadores", className="mb-3"),
+            html.H4("Giocatori", className="mb-3"),
             dash_table.DataTable(
                 id='players-table',
                 page_size=20,
@@ -283,7 +445,7 @@ layout = dbc.Container([
                         'backgroundColor': '#141824'
                     },
                     {
-                        'if': {'column_id': 'Perfil'},
+                        'if': {'column_id': 'Profilo'},
                         'color': '#0082F3',
                         'cursor': 'pointer',
                         'textDecoration': 'none'
@@ -291,7 +453,7 @@ layout = dbc.Container([
                 ],
                 style_cell_conditional=[
                     {
-                        'if': {'column_id': 'Perfil'},
+                        'if': {'column_id': 'Profilo'},
                         'width': '100px'
                     }
                 ],
@@ -304,129 +466,94 @@ layout = dbc.Container([
 ], fluid=True, style={"backgroundColor": "#0A0F26", "color": "#FFFFFF", "padding": "20px"})
 
 @callback(
-    [Output('position-checklist', 'options'),
-     Output('position-checklist', 'value')],
-    [Input('profile-dropdown', 'value')]
-)
-def update_position_checklist(selected_profile):
-    if not selected_profile:
-        return [], []
-    
-    valid_positions = PROFILE_TO_ROLES.get(selected_profile, [])
-    
-    options = [{'label': POSITION_TRANSLATION.get(pos, pos), 'value': pos} for pos in valid_positions]
-    
-    # Selecciona todas las posiciones por default
-    values = valid_positions
-    
-    return options, values
-
-@callback(
     [Output("players-table", "data"),
      Output("players-table", "columns")],
     [Input("profile-dropdown", "value"),
-     Input("position-checklist", "value"),
-     Input("league-checklist", "value"),
      Input("min-minutes-slider", "value"),
-     Input("age-range-slider", "value"),
+     Input("max-age-input", "value"),
      Input("market-value-slider", "value"),
-     Input("agente-libre-checklist", "value")]
+     Input("category-dropdown", "value")]
 )
-def update_table(profilo, posizioni_valide, selected_leagues, minuti_range, age_range, market_value_range, agente_libre_status):
-    if not profilo or not posizioni_valide or not selected_leagues:
-        return [], []
+def update_table(profilo, minuti_range, max_eta, market_value_range, selected_category):
+    # Determina le posizioni valide per il profilo
+    if profilo in ["Centrale - Marcatura", "Centrale - Deep Distributor", "Recuperatore 20-80"]:
+        posizioni_valide = ["Centre-Back"]
+    elif profilo == "Sentinel Fullback 20-80":
+        posizioni_valide = ["Left-Back", "Right-Back"]
+    elif profilo in ["Quinto ATA 70-30", "Arnold 80-20"]:
+        posizioni_valide = ["Left-Back", "Right-Back", "Left Midfield", "Right Midfield"]
+    elif profilo in ["Difensivo", "Play", "Box-to-Box"]:
+        posizioni_valide = ["Defensive Midfield", "Central Midfield", "Midfielder"]
+        if profilo == "Box-to-Box":
+            posizioni_valide.append("Attacking Midfield")
+    elif profilo == "Dieci":
+        posizioni_valide = ["Attacking Midfield", "Second Striker"]
+    elif profilo == "1vs1":
+        posizioni_valide = ["Right Winger", "Right Midfield", "Left Winger", "Left Midfield", "Second Striker", "Attacking Midfield"]
+    elif profilo == "Interior 90-10":
+        posizioni_valide = ["Right Winger", "Left Winger", "Second Striker", "Attacking Midfield"]
+    elif profilo in ["Mobile Forward", "Target"]:
+        posizioni_valide = ["Centre-Forward", "Second Striker"]
+    elif profilo == "Lethal Striker":
+        posizioni_valide = ["Centre-Forward"]
+    else:
+        posizioni_valide = ["Left-Back", "Right-Back", "Left Midfield", "Right Midfield"]
 
-    # Aplica los filtros base
+    # Applica i filtri base
     min_minuti, max_minuti = minuti_range
     mask = (
         df["Position"].isin(posizioni_valide) &
-        df["Lega"].isin(selected_leagues) &
         df["Mín"].notna() &
         (df["Mín"] >= min_minuti) &
         (df["Mín"] <= max_minuti)
     )
 
-    # Aplica el filtro del market value si se especifica
+    # Applica il filtro del market value se specificato
     if market_value_range:
         min_value, max_value = market_value_range
         mask = mask & (df["Market_Value_M"] >= min_value) & (df["Market_Value_M"] <= max_value)
     
-    dff = df[mask].copy()
-
-    if age_range:
-        dff = dff[(dff["Edad"] >= age_range[0]) & (dff["Edad"] <= age_range[1])]
-
-    # Aplica filtro agente libre
-    if agente_libre_status:
-        dff = dff[dff['Contratto'] == 'Junio 30, 2025']
+    df_filtrato = df[mask].copy()
+    if max_eta:
+        df_filtrato = df_filtrato[df_filtrato["Edad"] <= max_eta]
     
-    # Logica per visualizzare lo score corretto
-    if profilo:
-        # Traduce il profilo da spagnolo a italiano per trovare la colonna giusta
-        italian_profile = SPANISH_TO_ITALIAN_PROFILES.get(profilo)
-        if italian_profile:
-            score_col = f'Score_{italian_profile}'
-            category_col = f'Category_{italian_profile}'
-            
-            # Se le colonne esistono, le usa per 'Rating' e 'Categoría'
-            if score_col in dff.columns and category_col in dff.columns:
-                dff['Rating'] = dff[score_col].round(1)
-                dff['Categoría'] = dff[category_col]
-            else:
-                dff['Rating'] = 0
-                dff['Categoría'] = 'N/A'
-        else:
-            dff['Rating'] = 0
-            dff['Categoría'] = 'N/A'
-    else:
-        # Se nessun profilo è selezionato, le colonne rimangono vuote
-        dff['Rating'] = 0
-        dff['Categoría'] = 'N/A'
-
+    # Usa lo score pre-calcolato
+    df_filtrato["Score"] = df_filtrato[f'Score_{profilo}']
+    
     # Add player category based on age and score
-    dff["Categoria"] = dff.apply(
-        lambda row: get_player_category(row["Edad"], row["Rating"]), 
+    df_filtrato["Categoria"] = df_filtrato.apply(
+        lambda row: get_player_category(row["Edad"], row["Score"]), 
         axis=1
     )
-
-    dff = dff.sort_values(by="Rating", ascending=False)
     
-    # Añade la columna Perfil con el link
-    dff['Perfil'] = dff['Name'].apply(
-        lambda x: f'[Ver Perfil](/player/{urllib.parse.quote(x)})'
+    # Applica il filtro per categoria se selezionata
+    if selected_category:
+        df_filtrato = df_filtrato[df_filtrato["Categoria"] == selected_category]
+    
+    df_filtrato = df_filtrato.sort_values(by="Score", ascending=False)
+    
+    # Aggiungi la colonna Profilo con il link
+    df_filtrato['Profilo'] = df_filtrato['Name'].apply(
+        lambda x: f'[Visualizza](/player/{urllib.parse.quote(x)})'
     )
     
-    # Ricalcula Market_Value_M del Market Value original
-    dff['Market_Value_M'] = dff['Market Value'].apply(converti_valore_mercato)
+    # Ricalcola Market_Value_M dal Market Value originale
+    df_filtrato['Market_Value_M'] = df_filtrato['Market Value'].apply(converti_valore_mercato)
     
-    # Formatta el Market Value usando Market_Value_M
-    dff['Market Value'] = dff['Market_Value_M'].apply(
+    # Formatta il Market Value usando Market_Value_M
+    df_filtrato['Market Value'] = df_filtrato['Market_Value_M'].apply(
         lambda x: f"€{x:.1f}M" if pd.notna(x) else "N/A"
     )
-
-    # La traducción del contratto se ha movido al inicio de carga
     
-    # Traduce las posiciones
-    dff['Position'] = dff['Position'].map(POSITION_TRANSLATION).fillna(dff['Position'])
+    colonne_mostrate = ["Name", "Edad", "Height", "Foot", "Position", "Squadra", "Market Value", "Mín", "Score", "Categoria", "Profilo"]
     
-    # Columnas para mostrar y su traducción
-    col_mapping = {
-        "Name": "Nombre", "Edad": "Edad", "Height": "Altura", "Foot": "Pie",
-        "Position": "Posición", "Squadra": "Equipo", "Market Value": "Valor de Mercado", "Contratto": "Fin de Contrato",
-        "Mín": "Min", "Rating": "Rating", "Categoria": "Categoría", "Perfil": "Perfil"
-    }
+    # Formatta i minuti senza virgola
+    df_filtrato['Mín'] = df_filtrato['Mín'].round(0).astype(int)
     
-    df_display = dff.rename(columns=col_mapping)
+    data = df_filtrato[colonne_mostrate].round(1).to_dict("records")
+    columns = [{"name": col, "id": col} for col in colonne_mostrate]
     
-    # Formatta los minutos sin coma
-    if 'Min' in df_display.columns:
-        df_display['Min'] = df_display['Min'].round(0).astype(int)
-
-    colonne_mostrate = [
-        "Nombre", "Edad", "Altura", "Pie", "Posición", "Equipo", "Valor de Mercado", "Fin de Contrato", "Min", "Rating", "Categoría", "Perfil"
-    ]
-    
-    data = df_display[colonne_mostrate].round(1).to_dict("records")
-    columns = [{"name": col, "id": col, "presentation": "markdown"} if col == "Perfil" else {"name": col, "id": col} for col in colonne_mostrate]
+    # Configura la colonna Profilo per renderizzare i link markdown
+    columns[-1]["presentation"] = "markdown"
     
     return data, columns 
